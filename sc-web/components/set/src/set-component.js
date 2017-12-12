@@ -108,7 +108,7 @@ function addSimpleElementsToTheSet(userString, elementsOfTheSet) {
     for(var i = 0; i < elementsOfTheSet.length; i++){
         userString = userString.replace(elementsOfTheSet[i], '');
     }
-    var validElements = userString.match(/(\w+)/g);
+    var validElements = userString.match(/(\w+\*?\w+)/g);
     for (var elemnts in validElements) {
         elementsOfTheSet.push(validElements[elemnts]);
     }
@@ -139,13 +139,18 @@ function isValidUserString(userString){
 }
 
 
-function setGeneration(vertex, elements){
+function setGeneration(vertex, elements, isMultiset){
 
-    SCWeb.core.Server.resolveScAddr(['nrel_system_identifier','set','element_of_set'], function (keynodes) {
+    SCWeb.core.Server.resolveScAddr(['nrel_system_identifier','set', 'multiset', 'element_of_set', 'multiplicity_of_belonging', 'number', 'nrel_measurement', 'nrel_idtf'], function (keynodes) {
 
         var nrelSysId = keynodes['nrel_system_identifier'];
         var conceptSet = keynodes['set'];
+        var conceptMultiset = keynodes['multiset'];
         var conceptElement = keynodes['element_of_set'];
+        var nrelMeasurement = keynodes['nrel_measurement'];
+        var paramMultiplicity = keynodes['multiplicity_of_belonging'];
+        var conceptNumber = keynodes['number'];
+        var nrelIdtf = keynodes['nrel_idtf'];
 
         window.sctpClient.create_node(sc_type_const).done(function (setNode) {
 
@@ -154,13 +159,38 @@ function setGeneration(vertex, elements){
                 window.sctpClient.create_arc(sc_type_const, setNode, linkId).done(function (commonArc) {
                     window.sctpClient.create_arc(sc_type_arc_pos_const_perm, nrelSysId, commonArc);
 
-                    window.sctpClient.create_arc(sc_type_arc_pos_const_perm, conceptSet, setNode);
+                    if (isMultiset)
+                        window.sctpClient.create_arc(sc_type_arc_pos_const_perm, conceptMultiset, setNode);
+                    else
+                        window.sctpClient.create_arc(sc_type_arc_pos_const_perm, conceptSet, setNode);
 
                     elements.forEach(function (element){
                         window.sctpClient.create_node(sc_type_const).done(function (el) {
-                            window.sctpClient.create_arc(sc_type_arc_pos_const_perm, setNode, el);
+                            window.sctpClient.create_arc(sc_type_arc_pos_const_perm, setNode, el).done(function (belongingArc){
+                                window.sctpClient.create_node(sc_type_const).done(function (multiplicity) {
+                                    window.sctpClient.create_arc(sc_type_arc_pos_const_perm, paramMultiplicity, multiplicity);
+                                    window.sctpClient.create_arc(sc_type_arc_pos_const_perm, multiplicity, belongingArc);
+
+                                    window.sctpClient.create_node(sc_type_const).done(function (number) {
+                                        var binaryArc = (sc_type_arc_common | sc_type_const | sc_type_arc_pos | sc_type_arc_perm);
+                                        window.sctpClient.create_arc(binaryArc, multiplicity, number).done(function (measureArc) {
+                                            window.sctpClient.create_arc(sc_type_arc_pos_const_perm, nrelMeasurement, measureArc);
+                                        });
+
+                                        window.sctpClient.create_arc(sc_type_arc_pos_const_perm, conceptNumber, number);
+
+                                        window.sctpClient.create_link().done(function (numberLink) {
+                                            window.sctpClient.set_link_content(numberLink, element[0]);
+                                            window.sctpClient.create_arc(binaryArc, number, numberLink).done(function (idtfArc) {
+                                                window.sctpClient.create_arc(sc_type_arc_pos_const_perm, nrelIdtf, idtfArc);
+                                            });
+                                        });
+                                    });
+                                });
+                            });
+
                             window.sctpClient.create_link().done(function (linkEl) {
-                                window.sctpClient.set_link_content(linkEl, element);
+                                window.sctpClient.set_link_content(linkEl, element[1]);
                                 window.sctpClient.create_arc(sc_type_const, el, linkEl).done(function (commonArc) {
                                     window.sctpClient.create_arc(sc_type_arc_pos_const_perm, nrelSysId, commonArc);
                                     window.sctpClient.create_arc(sc_type_arc_pos_const_perm, conceptElement, el);
@@ -186,5 +216,26 @@ function callGenSet(userSet){
         elements.push(userSet.elementsOfTheSet[element]);
     }
 
-    setGeneration(vertex, elements);
+    var multiset = parseMultiplicity(elements);
+
+    setGeneration(vertex, multiset[0], multiset[1]);
+}
+
+function parseMultiplicity(elements){
+
+    var elementsWithMultiplicity = [];
+    var isMultiset = false;
+
+    for(var i = 0; i < elements.length; i++){
+        var pair = elements[i].split('*', 2);
+        if (pair.length == 2)
+        {
+            elementsWithMultiplicity.push(pair);
+            isMultiset = true;
+        }
+        else
+            elementsWithMultiplicity.push([0, pair[0]]);
+    }
+
+    return [elementsWithMultiplicity, isMultiset];
 }
